@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use errno::errno;
-use s2n_quic_core::{event, inet::SocketAddress, path::LocalAddress};
+use s2n_quic_core::{event, inet::SocketAddress, io, path::LocalAddress};
 
 pub use simple::Handle;
 
@@ -60,6 +60,69 @@ impl Error for std::io::Error {
     fn permission_denied(&self) -> bool {
         self.kind() == std::io::ErrorKind::PermissionDenied
     }
+}
+
+pub fn tx<S: Socket>(
+    socket: &S,
+    channel: &mut crate::io::channel::FilledSlice<Handle>,
+) -> Result<(), S::Error> {
+    use io::rx::Queue;
+    let entries = channel.as_slice_mut();
+    let mut count = 0;
+    let mut result = Ok(());
+
+    for entry in entries {
+        let handle = entry.handle();
+        let payload = entry.payload();
+
+        match socket.send_to(payload, &handle.remote_address) {
+            Ok(_) => {
+                count += 1;
+            }
+            Err(err) => {
+                result = Err(err);
+                break;
+            }
+        }
+    }
+
+    if count > 0 {
+        channel.finish(count);
+    }
+
+    result
+}
+
+pub fn rx<S: Socket>(
+    socket: &S,
+    channel: &mut crate::io::channel::UnfilledSlice<Handle>,
+) -> Result<(), S::Error> {
+    let mut result = Ok(());
+
+    while let Some(idx) = channel.pop() {
+        let shared = unsafe { &mut *channel.shared.get() };
+        let payload = shared.data.payload_mut(idx);
+
+        match socket.recv_from(payload) {
+            Ok((len, remote_address)) => {
+                if let Some(remote_address) = remote_address {
+                    shared.lens[idx as usize] = len as _;
+                    shared.handles[idx as usize].remote_address = remote_address.into();
+
+                    let _ = channel.remote.push(idx);
+                } else {
+                    *channel.buffer = Some(idx);
+                }
+            }
+            Err(err) => {
+                *channel.buffer = Some(idx);
+                result = Err(err);
+                break;
+            }
+        }
+    }
+
+    result
 }
 
 #[derive(Debug, Default)]

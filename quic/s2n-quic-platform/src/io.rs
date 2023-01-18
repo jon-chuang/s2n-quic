@@ -3,6 +3,8 @@
 
 mod select;
 
+pub mod channel;
+
 #[cfg(feature = "tokio")]
 pub mod tokio;
 

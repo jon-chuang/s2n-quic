@@ -14,7 +14,8 @@ use s2n_quic_core::{
 use std::{convert::TryInto, io, io::ErrorKind};
 use tokio::{net::UdpSocket, runtime::Handle};
 
-pub type PathHandle = socket::Handle;
+// pub type PathHandle = socket::Handle;
+pub type PathHandle = crate::socket::std::Handle;
 
 mod clock;
 use clock::Clock;
@@ -261,16 +262,42 @@ impl Io {
             addr.into()
         });
 
+        let rx_socket: std::net::UdpSocket = rx_socket.into();
+        let tx_socket: std::net::UdpSocket = tx_socket.into();
+
+        let local_addr = rx_socket.local_addr()?.into();
+
+        let (mut unfilled_rx, filled_rx) = crate::io::channel::pair(1500, 4096);
+        let (unfilled_tx, mut filled_tx) = crate::io::channel::pair(1500, 4096);
+
+        handle.spawn(async move {
+            let rx_socket = async_fd_shim::AsyncFd::new(rx_socket).unwrap();
+            while let Ok(()) = unfilled_rx.ready().await {
+                if let Ok(mut socket) = rx_socket.readable().await {
+                    if let Ok(mut slice) = unfilled_rx.try_slice() {
+                        let _ = socket.try_io(|socket| crate::socket::std::rx(socket, &mut slice));
+                    }
+                }
+            }
+        });
+
+        handle.spawn(async move {
+            let tx_socket = async_fd_shim::AsyncFd::new(tx_socket).unwrap();
+            while let Ok(()) = filled_tx.ready().await {
+                if let Ok(mut socket) = tx_socket.writable().await {
+                    if let Ok(mut slice) = filled_tx.try_slice() {
+                        let _ = socket.try_io(|socket| crate::socket::std::tx(socket, &mut slice));
+                    }
+                }
+            }
+        });
+
         let instance = Instance {
             clock,
-            rx_socket: rx_socket.into(),
-            tx_socket: tx_socket.into(),
-            rx,
-            tx,
+            rx: filled_rx,
+            tx: unfilled_tx,
             endpoint,
         };
-
-        let local_addr = instance.rx_socket.local_addr()?.into();
 
         let task = handle.spawn(async move {
             if let Err(err) = instance.event_loop().await {
@@ -454,13 +481,11 @@ impl Builder {
     }
 }
 
-#[derive(Debug)]
+//#[derive(Debug)]
 struct Instance<E> {
     clock: Clock,
-    rx_socket: std::net::UdpSocket,
-    tx_socket: std::net::UdpSocket,
-    rx: socket::Queue<buffer::Buffer>,
-    tx: socket::Queue<buffer::Buffer>,
+    rx: crate::io::channel::Filled<PathHandle>,
+    tx: crate::io::channel::Unfilled<PathHandle>,
     endpoint: E,
 }
 
@@ -468,45 +493,19 @@ impl<E: Endpoint<PathHandle = PathHandle>> Instance<E> {
     async fn event_loop(self) -> io::Result<()> {
         let Self {
             clock,
-            rx_socket,
-            tx_socket,
             mut rx,
             mut tx,
             mut endpoint,
         } = self;
 
-        cfg_if! {
-            if #[cfg(any(s2n_quic_platform_socket_msg, s2n_quic_platform_socket_mmsg))] {
-                let rx_socket = tokio::io::unix::AsyncFd::new(rx_socket)?;
-                let tx_socket = tokio::io::unix::AsyncFd::new(tx_socket)?;
-            } else {
-                let rx_socket = async_fd_shim::AsyncFd::new(rx_socket)?;
-                let tx_socket = async_fd_shim::AsyncFd::new(tx_socket)?;
-            }
-        }
-
         let mut timer = clock.timer();
 
         loop {
             // Poll for readability if we have free slots available
-            let rx_interest = rx.free_len() > 0;
-            let rx_task = async {
-                if rx_interest {
-                    rx_socket.readable().await
-                } else {
-                    futures::future::pending().await
-                }
-            };
+            let rx_task = rx.ready();
 
             // Poll for writablity if we have occupied slots available
-            let tx_interest = tx.occupied_len() > 0;
-            let tx_task = async {
-                if tx_interest {
-                    tx_socket.writable().await
-                } else {
-                    futures::future::pending().await
-                }
-            };
+            let tx_task = tx.tx_ready();
 
             let wakeups = endpoint.wakeups(&clock);
             // pin the wakeups future so we don't have to move it into the Select future.
@@ -542,20 +541,18 @@ impl<E: Endpoint<PathHandle = PathHandle>> Instance<E> {
                 application_wakeup,
             });
 
-            if let Some(guard) = tx_result {
-                if let Ok(result) = guard?.try_io(|socket| tx.tx(socket, &mut publisher)) {
-                    result?;
+            if let Some(Ok(())) = rx_result {
+                if let Ok(mut rx_slice) = rx.try_slice() {
+                    endpoint.receive(&mut rx_slice, &clock);
                 }
             }
 
-            if let Some(guard) = rx_result {
-                if let Ok(result) = guard?.try_io(|socket| rx.rx(socket, &mut publisher)) {
-                    result?;
-                }
-                endpoint.receive(&mut rx.rx_queue(), &clock);
-            }
+            // ignore the tx_result; we always try to transmit
+            let _ = tx_result;
 
-            endpoint.transmit(&mut tx.tx_queue(), &clock);
+            if let Ok(mut tx_slice) = tx.try_slice() {
+                endpoint.transmit(&mut tx_slice, &clock);
+            }
 
             let timeout = endpoint.timeout();
 

@@ -176,7 +176,7 @@ impl Handle for RemoteAddress {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq)]
+#[derive(Clone, Copy, Debug, Default, Eq)]
 #[cfg_attr(any(test, feature = "generator"), derive(TypeGenerator))]
 pub struct Tuple {
     pub remote_address: RemoteAddress,
