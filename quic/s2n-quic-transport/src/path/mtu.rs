@@ -61,7 +61,7 @@ const MAX_PROBES: u8 = 3;
 /// Ethernet is 1500 octets, thus the maximum length of an IP datagram
 /// sent over an Ethernet is 1500 octets.
 /// See https://www.rfc-editor.org/rfc/rfc894.txt
-const ETHERNET_MTU: u16 = 1500;
+const ETHERNET_MTU: u16 = 8500;
 
 /// If the next value to probe is within the PROBE_THRESHOLD bytes of
 /// the current Path MTU, probing will be considered complete.

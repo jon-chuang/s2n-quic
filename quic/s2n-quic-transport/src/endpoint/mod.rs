@@ -102,11 +102,9 @@ impl<Cfg: Config> s2n_quic_core::endpoint::Endpoint for Endpoint<Cfg> {
     {
         use rx::Entry;
 
-        let local_address = queue.local_address();
-        let entries = queue.as_slice_mut();
         let mut now: Option<Timestamp> = None;
 
-        for entry in entries.iter_mut() {
+        while let Some(mut entry) = queue.pop() {
             let timestamp = match now {
                 Some(time) => time,
                 None => {
@@ -115,13 +113,12 @@ impl<Cfg: Config> s2n_quic_core::endpoint::Endpoint for Endpoint<Cfg> {
                 }
             };
 
-            if let Some((header, payload)) = entry.read(&local_address) {
+            while let Some((header, payload)) = entry.next_segment() {
                 self.receive_datagram(&header, payload, timestamp)
             }
-        }
 
-        let len = entries.len();
-        queue.finish(len);
+            queue.finish(entry);
+        }
     }
 
     fn transmit<Tx, C>(&mut self, queue: &mut Tx, clock: &C)

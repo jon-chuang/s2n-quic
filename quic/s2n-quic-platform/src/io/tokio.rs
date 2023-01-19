@@ -99,12 +99,16 @@ impl Io {
 
         let guard = handle.enter();
 
-        let rx_socket = if let Some(rx_socket) = rx_socket {
+        let mut rx_sockets = vec![];
+
+        if let Some(rx_socket) = rx_socket {
             // ensure the socket is non-blocking
             rx_socket.set_nonblocking(true)?;
-            rx_socket
+            rx_sockets.push(rx_socket);
         } else if let Some(recv_addr) = recv_addr {
-            bind(recv_addr, reuse_port)?
+            for _ in 0..8 {
+                rx_sockets.push(bind(recv_addr, reuse_port)?);
+            }
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -112,18 +116,25 @@ impl Io {
             ));
         };
 
-        let tx_socket = if let Some(tx_socket) = tx_socket {
+        let mut tx_sockets = vec![];
+
+        if let Some(tx_socket) = tx_socket {
             // ensure the socket is non-blocking
             tx_socket.set_nonblocking(true)?;
-            tx_socket
+            tx_sockets.push(tx_socket);
         } else if let Some(send_addr) = send_addr {
-            bind(send_addr, reuse_port)?
+            for _ in 0..8 {
+                tx_sockets.push(bind(send_addr, reuse_port)?);
+            }
         } else {
             // No tx_socket or send address was specified, so the tx socket
             // will be a handle to the rx socket.
-            rx_socket.try_clone()?
+            for rx_socket in &rx_sockets {
+                tx_sockets.push(rx_socket.try_clone()?);
+            }
         };
 
+        /*
         if let Some(size) = send_buffer_size {
             tx_socket.set_send_buffer_size(size)?;
         }
@@ -131,6 +142,7 @@ impl Io {
         if let Some(size) = recv_buffer_size {
             rx_socket.set_recv_buffer_size(size)?;
         }
+        */
 
         fn convert_addr_to_std(addr: socket2::SockAddr) -> io::Result<std::net::SocketAddr> {
             addr.as_socket().ok_or_else(|| {
@@ -140,10 +152,11 @@ impl Io {
 
         #[allow(unused_variables)] // some platform builds won't use these so ignore warnings
         let (tx_addr, rx_addr) = (
-            convert_addr_to_std(tx_socket.local_addr()?)?,
-            convert_addr_to_std(rx_socket.local_addr()?)?,
+            convert_addr_to_std(tx_sockets[0].local_addr()?)?,
+            convert_addr_to_std(rx_sockets[0].local_addr()?)?,
         );
 
+        /*
         //= https://www.rfc-editor.org/rfc/rfc9000#section-14
         //# UDP datagrams MUST NOT be fragmented at the IP layer.
 
@@ -261,15 +274,17 @@ impl Io {
             let addr: inet::SocketAddress = rx_addr.into();
             addr.into()
         });
+        */
 
+        let mut local_addr = Default::default();
+
+        let (mut unfilled_rx, filled_rx) = crate::io::channel::pair(u16::MAX, 4096);
+        let rx_socket = rx_sockets.pop().unwrap();
+        //let (unfilled_rx, filled_rx) = crate::io::channel::set(u16::MAX, 1024, rx_sockets.len());
+
+        //for (rx_socket, mut unfilled_rx) in rx_sockets.into_iter().zip(unfilled_rx.inner) {
         let rx_socket: std::net::UdpSocket = rx_socket.into();
-        let tx_socket: std::net::UdpSocket = tx_socket.into();
-
-        let local_addr = rx_socket.local_addr()?.into();
-
-        let (mut unfilled_rx, filled_rx) = crate::io::channel::pair(1500, 4096);
-        let (unfilled_tx, mut filled_tx) = crate::io::channel::pair(1500, 4096);
-
+        local_addr = rx_socket.local_addr()?.into();
         handle.spawn(async move {
             let rx_socket = async_fd_shim::AsyncFd::new(rx_socket).unwrap();
             while let Ok(()) = unfilled_rx.ready().await {
@@ -280,7 +295,14 @@ impl Io {
                 }
             }
         });
+        //}
 
+        let (unfilled_tx, mut filled_tx) = crate::io::channel::pair(u16::MAX, 4096);
+        let tx_socket = tx_sockets.pop().unwrap();
+        //let (unfilled_tx, filled_tx) = crate::io::channel::set(u16::MAX, 1024, 2);
+
+        //for (tx_socket, mut filled_tx) in tx_sockets.into_iter().zip(filled_tx.inner) {
+        let tx_socket: std::net::UdpSocket = tx_socket.into();
         handle.spawn(async move {
             let tx_socket = async_fd_shim::AsyncFd::new(tx_socket).unwrap();
             while let Ok(()) = filled_tx.ready().await {
@@ -291,6 +313,7 @@ impl Io {
                 }
             }
         });
+        //}
 
         let instance = Instance {
             clock,
@@ -485,7 +508,9 @@ impl Builder {
 struct Instance<E> {
     clock: Clock,
     rx: crate::io::channel::Filled<PathHandle>,
+    //rx: crate::io::channel::FilledSet<PathHandle>,
     tx: crate::io::channel::Unfilled<PathHandle>,
+    //tx: crate::io::channel::UnfilledSet<PathHandle>,
     endpoint: E,
 }
 

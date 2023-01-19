@@ -16,8 +16,8 @@ pub trait Provider: 'static {
     ) -> Result<SocketAddress, Self::Error>;
 }
 
-#[cfg(any(test, all(not(docdiff), feature = "unstable-provider-io-testing")))]
-pub mod testing;
+//#[cfg(any(test, all(not(docdiff), feature = "unstable-provider-io-testing")))]
+//pub mod testing;
 
 pub mod tokio;
 

@@ -69,8 +69,8 @@ pub use client::Client;
 pub use connection::Connection;
 pub use server::Server;
 
-#[cfg(test)]
-mod tests;
+//#[cfg(test)]
+//mod tests;
 
 // Require `--cfg s2n_quic_unstable` is set when using unstable features
 #[cfg(

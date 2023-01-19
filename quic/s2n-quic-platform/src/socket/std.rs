@@ -1,18 +1,10 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{
-    buffer::Buffer,
-    message::{
-        queue,
-        simple::{self, Message, Ring},
-        Message as _,
-    },
-};
 use errno::errno;
 use s2n_quic_core::{event, inet::SocketAddress, io, path::LocalAddress};
 
-pub use simple::Handle;
+pub use s2n_quic_core::path::Tuple as Handle;
 
 pub trait Socket {
     type Error: Error;
@@ -66,31 +58,44 @@ pub fn tx<S: Socket>(
     socket: &S,
     channel: &mut crate::io::channel::FilledSlice<Handle>,
 ) -> Result<(), S::Error> {
-    use io::rx::Queue;
-    let entries = channel.as_slice_mut();
-    let mut count = 0;
-    let mut result = Ok(());
+    while let Some(mut entry) = channel.pop() {
+        {
+            let handle = &entry.0.handle;
+            let payload = &entry.0.payload;
 
-    for entry in entries {
-        let handle = entry.handle();
-        let payload = entry.payload();
+            payload.invariants();
 
-        match socket.send_to(payload, &handle.remote_address) {
-            Ok(_) => {
-                count += 1;
-            }
-            Err(err) => {
-                result = Err(err);
-                break;
+            // make sure we have at least one segment to read
+            debug_assert!(payload.segment_read_cursor < payload.segment_write_cursor);
+
+            let mut count = 0;
+
+            let mut segments = payload.segments();
+
+            while let Some(segment) = segments.next() {
+                match socket.send_to(segment, &handle.remote_address) {
+                    Ok(_) => {
+                        count += segment.len() as u16;
+                    }
+                    Err(err) => {
+                        drop(segments);
+
+                        // save our place for the next time the socket is ready
+                        entry.0.payload.segment_read_cursor += count;
+                        *channel.buffer = Some(entry);
+                        return Err(err);
+                    }
+                }
             }
         }
+
+        let payload = &mut entry.0.payload;
+
+        payload.reset();
+        let _ = channel.remote.push(entry);
     }
 
-    if count > 0 {
-        channel.finish(count);
-    }
-
-    result
+    Ok(())
 }
 
 pub fn rx<S: Socket>(
@@ -99,148 +104,32 @@ pub fn rx<S: Socket>(
 ) -> Result<(), S::Error> {
     let mut result = Ok(());
 
-    while let Some(idx) = channel.pop() {
-        let shared = unsafe { &mut *channel.shared.get() };
-        let payload = shared.data.payload_mut(idx);
-
-        match socket.recv_from(payload) {
-            Ok((len, remote_address)) => {
-                if let Some(remote_address) = remote_address {
-                    shared.lens[idx as usize] = len as _;
-                    shared.handles[idx as usize].remote_address = remote_address.into();
-
-                    let _ = channel.remote.push(idx);
-                } else {
-                    *channel.buffer = Some(idx);
-                }
+    while let Some(mut entry) = channel.pop() {
+        let payload = entry.payload_mut();
+        match socket.recv_from(&mut payload.data) {
+            Ok((0, _)) => {
+                *channel.buffer = Some(entry);
+                break;
             }
             Err(err) => {
-                *channel.buffer = Some(idx);
+                *channel.buffer = Some(entry);
                 result = Err(err);
                 break;
+            }
+            Ok((len, remote_address)) => {
+                if let Some(remote_address) = remote_address {
+                    payload.segment_count = 1;
+                    payload.segment_size = len as _;
+                    payload.segment_write_cursor = len as _;
+                    payload.segment_read_cursor = 0;
+                    entry.handle_mut().remote_address = remote_address.into();
+                    let _ = channel.remote.push(entry);
+                } else {
+                    *channel.buffer = Some(entry);
+                }
             }
         }
     }
 
     result
-}
-
-#[derive(Debug, Default)]
-pub struct Queue<B: Buffer>(queue::Queue<Ring<B>>);
-
-impl<B: Buffer> Queue<B> {
-    pub fn new(buffer: B) -> Self {
-        let queue = queue::Queue::new(Ring::new(buffer, 1));
-
-        Self(queue)
-    }
-
-    pub fn free_len(&self) -> usize {
-        self.0.free_len()
-    }
-
-    pub fn occupied_len(&self) -> usize {
-        self.0.occupied_len()
-    }
-
-    pub fn set_local_address(&mut self, local_address: LocalAddress) {
-        self.0.set_local_address(local_address)
-    }
-
-    pub fn tx<S: Socket, Publisher: event::EndpointPublisher>(
-        &mut self,
-        socket: &S,
-        publisher: &mut Publisher,
-    ) -> Result<usize, S::Error> {
-        let mut count = 0;
-        let mut entries = self.0.occupied_mut();
-
-        for entry in entries.as_mut() {
-            if let Some(remote_address) = entry.remote_address() {
-                match socket.send_to(entry.payload_mut(), &remote_address) {
-                    Ok(_) => {
-                        count += 1;
-
-                        publisher.on_platform_tx(event::builder::PlatformTx { count: 1 });
-                    }
-                    Err(err) if count > 0 && err.would_block() => {
-                        break;
-                    }
-                    Err(err) if err.was_interrupted() || err.permission_denied() => {
-                        break;
-                    }
-                    Err(err) => {
-                        entries.finish(count);
-
-                        publisher.on_platform_rx_error(event::builder::PlatformRxError {
-                            errno: errno().0,
-                        });
-
-                        return Err(err);
-                    }
-                }
-            }
-        }
-
-        entries.finish(count);
-
-        Ok(count)
-    }
-
-    pub fn rx<S: Socket, Publisher: event::EndpointPublisher>(
-        &mut self,
-        socket: &S,
-        publisher: &mut Publisher,
-    ) -> Result<usize, S::Error> {
-        let mut count = 0;
-        let mut entries = self.0.free_mut();
-
-        while let Some(entry) = entries.get_mut(count) {
-            match socket.recv_from(entry.payload_mut()) {
-                Ok((payload_len, Some(remote_address))) => {
-                    entry.set_remote_address(&remote_address);
-                    unsafe {
-                        // Safety: The payload_len should not be bigger than the number of
-                        // allocated bytes.
-
-                        debug_assert!(payload_len < entry.payload_len());
-                        let payload_len = payload_len.min(entry.payload_len());
-
-                        entry.set_payload_len(payload_len);
-                    }
-
-                    count += 1;
-
-                    publisher.on_platform_rx(event::builder::PlatformRx { count: 1 });
-                }
-                Ok((_payload_len, None)) => {}
-                Err(err) if count > 0 && err.would_block() => {
-                    break;
-                }
-                Err(err) if err.was_interrupted() => {
-                    break;
-                }
-                Err(err) => {
-                    entries.finish(count);
-
-                    publisher
-                        .on_platform_rx_error(event::builder::PlatformRxError { errno: errno().0 });
-
-                    return Err(err);
-                }
-            }
-        }
-
-        entries.finish(count);
-
-        Ok(count)
-    }
-
-    pub fn rx_queue(&mut self) -> queue::Occupied<Message> {
-        self.0.occupied_mut()
-    }
-
-    pub fn tx_queue(&mut self) -> queue::Free<Message> {
-        self.0.free_mut()
-    }
 }

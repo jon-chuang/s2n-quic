@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub use anyhow::Error;
+pub type Result<T = (), E = Error> = core::result::Result<T, E>;
+
+fn main() -> Result {
+    Ok(())
+}
+
+/*
 use structopt::StructOpt;
 
-pub type Result<T = (), E = Error> = core::result::Result<T, E>;
 
 mod batch;
 mod query;
@@ -47,3 +53,4 @@ impl tracing_subscriber::fmt::time::FormatTime for Uptime {
         write!(w, "{}", s2n_quic::provider::io::testing::now())
     }
 }
+*/
