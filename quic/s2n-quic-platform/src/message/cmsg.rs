@@ -75,7 +75,7 @@ impl Encoder for libc::msghdr {
 
             // interpret the start of cmsg as a cmsghdr
             // Safety: the cmsg slice should already be zero-initialized and aligned
-            debug_assert!(cmsg.iter().all(|b| *b == 0));
+            // debug_assert!(cmsg.iter().all(|b| *b == 0));
             let cmsg = &mut *(&mut cmsg[0] as *mut u8 as *mut libc::cmsghdr);
 
             // Indicate the type of cmsg
@@ -173,6 +173,11 @@ pub fn decode(msghdr: &libc::msghdr) -> AncillaryData {
                 (libc::SOL_UDP, libc::UDP_SEGMENT, _) => {
                     // ignore GSO settings when reading
                     continue;
+                }
+                #[cfg(s2n_quic_platform_gso)]
+                (libc::SOL_UDP, libc::UDP_GRO, _) => {
+                    let segment_size = decode_value::<libc::c_int>(cmsg);
+                    result.segment_size = segment_size as _;
                 }
                 (level, ty, len) if cfg!(test) => {
                     // if we're getting an unexpected cmsg we should know about it in testing

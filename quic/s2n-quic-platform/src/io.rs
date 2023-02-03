@@ -1,6 +1,9 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+mod event_loop;
+pub(crate) use event_loop::EventLoop;
+
 mod select;
 
 pub mod channel;

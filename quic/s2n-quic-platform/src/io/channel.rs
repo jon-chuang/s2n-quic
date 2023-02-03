@@ -280,6 +280,10 @@ impl<'a, H: Handle> tx::Queue for UnfilledSlice<'a, H> {
         } else {
             let start = entry.0.payload.segment_write_cursor as usize;
             let end = start + segment_size as usize;
+
+            debug_assert!(start <= entry.payload().data.len(), "{:?}", entry.payload());
+            debug_assert!(end <= entry.payload().data.len(), "{:?}", entry.payload());
+
             &mut entry.0.payload.data[start..end]
         };
         let payload = tx::PayloadBuffer::new(payload);

@@ -9,6 +9,7 @@ use crate::{
     transmission,
 };
 use core::time::Duration;
+use once_cell::sync::Lazy;
 use s2n_codec::EncoderValue;
 use s2n_quic_core::{
     counter::{Counter, Saturating},
@@ -61,7 +62,12 @@ const MAX_PROBES: u8 = 3;
 /// Ethernet is 1500 octets, thus the maximum length of an IP datagram
 /// sent over an Ethernet is 1500 octets.
 /// See https://www.rfc-editor.org/rfc/rfc894.txt
-const ETHERNET_MTU: u16 = 8500;
+static ETHERNET_MTU: Lazy<u16> = Lazy::new(|| {
+    std::env::var("S2N_MTU")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1500)
+});
 
 /// If the next value to probe is within the PROBE_THRESHOLD bytes of
 /// the current Path MTU, probing will be considered complete.
@@ -142,7 +148,7 @@ impl Controller {
         // The UDP payload size for the most likely MTU is based on standard Ethernet MTU minus
         // the minimum length IP headers (without IPv4 options or IPv6 extensions) and UPD header
         let initial_probed_size =
-            (ETHERNET_MTU - UDP_HEADER_LEN - min_ip_header_len).min(max_udp_payload);
+            (*ETHERNET_MTU - UDP_HEADER_LEN - min_ip_header_len).min(max_udp_payload);
 
         Self {
             state: State::Disabled,
@@ -522,7 +528,7 @@ mod test {
         assert_eq!(State::Disabled, controller.state);
         assert!(!controller.pmtu_raise_timer.is_armed());
         assert_eq!(
-            ETHERNET_MTU - UDP_HEADER_LEN - IPV4_MIN_HEADER_LEN,
+            *ETHERNET_MTU - UDP_HEADER_LEN - IPV4_MIN_HEADER_LEN,
             controller.probed_size
         );
     }
@@ -546,7 +552,7 @@ mod test {
         assert_eq!(State::Disabled, controller.state);
         assert!(!controller.pmtu_raise_timer.is_armed());
         assert_eq!(
-            ETHERNET_MTU - UDP_HEADER_LEN - IPV6_MIN_HEADER_LEN,
+            *ETHERNET_MTU - UDP_HEADER_LEN - IPV6_MIN_HEADER_LEN,
             controller.probed_size
         );
     }

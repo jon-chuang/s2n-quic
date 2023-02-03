@@ -54,82 +54,94 @@ impl Error for std::io::Error {
     }
 }
 
-pub fn tx<S: Socket>(
-    socket: &S,
-    channel: &mut crate::io::channel::FilledSlice<Handle>,
-) -> Result<(), S::Error> {
-    while let Some(mut entry) = channel.pop() {
-        {
-            let handle = &entry.0.handle;
-            let payload = &entry.0.payload;
+#[derive(Default)]
+pub struct Tx;
 
-            payload.invariants();
+impl Tx {
+    pub fn apply<S: Socket>(
+        &mut self,
+        socket: &S,
+        channel: &mut crate::io::channel::FilledSlice<Handle>,
+    ) -> Result<(), S::Error> {
+        while let Some(mut entry) = channel.pop() {
+            {
+                let handle = &entry.0.handle;
+                let payload = &entry.0.payload;
 
-            // make sure we have at least one segment to read
-            debug_assert!(payload.segment_read_cursor < payload.segment_write_cursor);
+                payload.invariants();
 
-            let mut count = 0;
+                // make sure we have at least one segment to read
+                debug_assert!(payload.segment_read_cursor < payload.segment_write_cursor);
 
-            let mut segments = payload.segments();
+                let mut count = 0;
 
-            while let Some(segment) = segments.next() {
-                match socket.send_to(segment, &handle.remote_address) {
-                    Ok(_) => {
-                        count += segment.len() as u16;
-                    }
-                    Err(err) => {
-                        drop(segments);
+                let mut segments = payload.segments();
 
-                        // save our place for the next time the socket is ready
-                        entry.0.payload.segment_read_cursor += count;
-                        *channel.buffer = Some(entry);
-                        return Err(err);
+                while let Some(segment) = segments.next() {
+                    match socket.send_to(segment, &handle.remote_address) {
+                        Ok(_) => {
+                            count += segment.len() as u16;
+                        }
+                        Err(err) => {
+                            drop(segments);
+
+                            // save our place for the next time the socket is ready
+                            entry.0.payload.segment_read_cursor += count;
+                            *channel.buffer = Some(entry);
+                            return Err(err);
+                        }
                     }
                 }
             }
+
+            let payload = &mut entry.0.payload;
+
+            payload.reset();
+            let _ = channel.remote.push(entry);
         }
 
-        let payload = &mut entry.0.payload;
-
-        payload.reset();
-        let _ = channel.remote.push(entry);
+        Ok(())
     }
-
-    Ok(())
 }
 
-pub fn rx<S: Socket>(
-    socket: &S,
-    channel: &mut crate::io::channel::UnfilledSlice<Handle>,
-) -> Result<(), S::Error> {
-    let mut result = Ok(());
+#[derive(Default)]
+pub struct Rx;
 
-    while let Some(mut entry) = channel.pop() {
-        let payload = entry.payload_mut();
-        match socket.recv_from(&mut payload.data) {
-            Ok((0, _)) => {
-                *channel.buffer = Some(entry);
-                break;
-            }
-            Err(err) => {
-                *channel.buffer = Some(entry);
-                result = Err(err);
-                break;
-            }
-            Ok((len, remote_address)) => {
-                if let Some(remote_address) = remote_address {
-                    payload.segment_count = 1;
-                    payload.segment_size = len as _;
-                    payload.segment_write_cursor = len as _;
-                    payload.segment_read_cursor = 0;
-                    entry.handle_mut().remote_address = remote_address.into();
-                    let _ = channel.remote.push(entry);
-                } else {
+impl Rx {
+    pub fn apply<S: Socket>(
+        &mut self,
+        socket: &S,
+        channel: &mut crate::io::channel::UnfilledSlice<Handle>,
+    ) -> Result<(), S::Error> {
+        let mut result = Ok(());
+
+        while let Some(mut entry) = channel.pop() {
+            let payload = entry.payload_mut();
+            match socket.recv_from(&mut payload.data) {
+                Ok((0, _)) => {
                     *channel.buffer = Some(entry);
+                    break;
+                }
+                Err(err) => {
+                    *channel.buffer = Some(entry);
+                    result = Err(err);
+                    break;
+                }
+                Ok((len, remote_address)) => {
+                    if let Some(remote_address) = remote_address {
+                        payload.segment_count = 1;
+                        payload.segment_size = len as _;
+                        payload.segment_write_cursor = len as _;
+                        payload.segment_read_cursor = 0;
+                        entry.handle_mut().remote_address = remote_address.into();
+                        let _ = channel.remote.push(entry);
+                    } else {
+                        *channel.buffer = Some(entry);
+                    }
                 }
             }
         }
-    }
 
-    result
+        result
+    }
 }

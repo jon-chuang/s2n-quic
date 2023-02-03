@@ -1,6 +1,7 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::io::event_loop;
 use core::{
     future::Future,
     pin::Pin,
@@ -23,8 +24,12 @@ impl Clock {
     pub fn new() -> Self {
         Self(Instant::now())
     }
+}
 
-    pub fn timer(&self) -> Timer {
+impl event_loop::Clock for Clock {
+    type Timer = Timer;
+
+    fn timer(&self) -> Self::Timer {
         Timer::new(self.clone())
     }
 }
@@ -63,9 +68,11 @@ impl Timer {
             sleep,
         }
     }
+}
 
+impl event_loop::Timer for Timer {
     /// Modifies the target expiration timestamp for the timer
-    pub fn update(&mut self, timestamp: Timestamp) {
+    fn update(&mut self, timestamp: Timestamp) {
         let delay = unsafe {
             // Safety: the same clock epoch is being used
             timestamp.as_duration()

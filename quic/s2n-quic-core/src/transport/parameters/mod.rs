@@ -624,7 +624,7 @@ pub const fn compute_data_window(mbps: u64, rtt: Duration, rtt_count: u64) -> Va
 
 impl InitialMaxData {
     /// Tuned for 150Mbps with a 100ms RTT
-    pub const RECOMMENDED: Self = Self(compute_data_window(150, Duration::from_millis(100), 2));
+    pub const RECOMMENDED: Self = Self(compute_data_window(500, Duration::from_millis(100), 2));
 }
 
 impl TransportParameterValidator for InitialMaxData {}
