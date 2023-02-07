@@ -8,7 +8,7 @@ use crate::{
 
 // TODO investigate a good default
 /// The default send buffer size for Streams
-const DEFAULT_STREAM_MAX_SEND_BUFFER_SIZE: u32 = 512 * 1024;
+const DEFAULT_STREAM_MAX_SEND_BUFFER_SIZE: u32 = 8 * 1024 * 1024;
 
 pub trait LocalLimits {
     fn as_varint(&self) -> VarInt;

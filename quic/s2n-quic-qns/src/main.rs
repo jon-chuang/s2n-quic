@@ -22,8 +22,19 @@ const CRASH_ERROR_MESSAGE: &str = "The s2n-quic-qns application shut down unexpe
 #[global_allocator]
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[tokio::main()]
-async fn main() {
+fn main() {
+    if std::env::var("S2N_CURRENT_THREAD").is_ok() {
+        tokio::runtime::Builder::new_current_thread()
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+    }
+    .enable_all()
+    .build()
+    .unwrap()
+    .block_on(run_main());
+}
+
+async fn run_main() {
     let format = tracing_subscriber::fmt::format()
         .with_level(false) // don't include levels in formatted output
         .with_timer(tracing_subscriber::fmt::time::uptime())

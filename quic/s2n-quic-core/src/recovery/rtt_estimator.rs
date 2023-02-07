@@ -174,7 +174,7 @@ impl RttEstimator {
         is_handshake_confirmed: bool,
         space: PacketNumberSpace,
     ) {
-        self.latest_rtt = rtt_sample.max(Duration::from_millis(1));
+        self.latest_rtt = rtt_sample;
 
         if self.first_rtt_sample.is_none() {
             self.first_rtt_sample = Some(timestamp);

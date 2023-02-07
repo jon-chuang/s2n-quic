@@ -184,7 +184,17 @@ impl Io {
 
         let mut local_addr = Default::default();
 
-        let (unfilled_rx, filled_rx) = crate::io::channel::pair(u16::MAX, 4096);
+        let rx_size = std::env::var("RX_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(u16::MAX as u32);
+
+        let rx_count = std::env::var("RX_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096);
+
+        let (unfilled_rx, filled_rx) = crate::io::channel::pair(rx_size, rx_count);
         let rx_socket = rx_sockets.pop().unwrap();
         //let (unfilled_rx, filled_rx) = crate::io::channel::set(u16::MAX, 1024, rx_sockets.len());
 
@@ -195,7 +205,15 @@ impl Io {
         handle.spawn(socket::msg::rx(rx_socket, unfilled_rx));
         //}
 
-        let (unfilled_tx, filled_tx) = crate::io::channel::pair(u16::MAX, 4096);
+        let tx_size = std::env::var("TX_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(u16::MAX as u32);
+        let tx_count = std::env::var("TX_COUNT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096);
+        let (unfilled_tx, filled_tx) = crate::io::channel::pair(tx_size, tx_count);
         let tx_socket = tx_sockets.pop().unwrap();
         //let (unfilled_tx, filled_tx) = crate::io::channel::set(u16::MAX, 1024, 2);
 

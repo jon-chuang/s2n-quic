@@ -12,6 +12,8 @@ use s2n_quic_core::{
 };
 use std::collections::BinaryHeap;
 
+type LenSize = u32;
+
 pub struct Entry<H: Handle>(pub(crate) Box<InnerEntry<H>>);
 
 pub(crate) struct InnerEntry<H> {
@@ -76,10 +78,10 @@ impl<H: Handle> Drop for Entry<H> {
 
 pub struct Buffer {
     pub(crate) data: Box<[u8]>,
-    pub(crate) segment_size: u16,
-    pub(crate) segment_count: u16,
-    pub(crate) segment_write_cursor: u16,
-    pub(crate) segment_read_cursor: u16,
+    pub(crate) segment_size: LenSize,
+    pub(crate) segment_count: LenSize,
+    pub(crate) segment_write_cursor: LenSize,
+    pub(crate) segment_read_cursor: LenSize,
 }
 
 impl fmt::Debug for Buffer {
@@ -94,7 +96,7 @@ impl fmt::Debug for Buffer {
 }
 
 impl Buffer {
-    pub fn new(max_payload: u16) -> Self {
+    pub fn new(max_payload: LenSize) -> Self {
         let data = vec![0u8; max_payload as usize].into();
         Self {
             data,
@@ -289,7 +291,7 @@ impl<'a, H: Handle> tx::Queue for UnfilledSlice<'a, H> {
         let payload = tx::PayloadBuffer::new(payload);
 
         let len = match message.write_payload(payload, segment_count as usize) {
-            Ok(len) => len as u16,
+            Ok(len) => len as LenSize,
             Err(err) => {
                 *self.buffer = Some(entry);
                 return Err(err);
@@ -466,12 +468,12 @@ impl<'a, H: Handle> rx::Queue for FilledSlice<'a, H> {
     }
 }
 
-pub fn pair<H: Default + Handle>(max_payload: u16, count: u16) -> (Unfilled<H>, Filled<H>) {
+pub fn pair<H: Default + Handle>(max_payload: LenSize, count: u16) -> (Unfilled<H>, Filled<H>) {
     pair_inner(max_payload, count, 0)
 }
 
 pub fn set<H: Default + Handle>(
-    max_payload: u16,
+    max_payload: LenSize,
     count: u16,
     len: usize,
 ) -> (UnfilledSet<H>, FilledSet<H>) {
@@ -492,7 +494,7 @@ pub fn set<H: Default + Handle>(
 }
 
 fn pair_inner<H: Default + Handle>(
-    max_payload: u16,
+    max_payload: LenSize,
     count: u16,
     queue: u16,
 ) -> (Unfilled<H>, Filled<H>) {
@@ -717,7 +719,7 @@ impl<'a, H: Handle> tx::Queue for UnfilledSetSlice<'a, H> {
         let payload = tx::PayloadBuffer::new(payload);
 
         let len = match message.write_payload(payload, segment_count as usize) {
-            Ok(len) => len as u16,
+            Ok(len) => len as LenSize,
             Err(err) => {
                 self.buffer.push(BufferedEntry(entry));
                 return Err(err);

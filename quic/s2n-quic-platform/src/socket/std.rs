@@ -80,7 +80,7 @@ impl Tx {
                 while let Some(segment) = segments.next() {
                     match socket.send_to(segment, &handle.remote_address) {
                         Ok(_) => {
-                            count += segment.len() as u16;
+                            count += segment.len() as u32;
                         }
                         Err(err) => {
                             drop(segments);

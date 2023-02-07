@@ -69,9 +69,7 @@ impl MaxSegments {
     // positive effect on efficiency.
     //= https://www.rfc-editor.org/rfc/rfc9002#section-7.7
     //# Senders SHOULD limit bursts to the initial congestion window
-    const DEFAULT: Self = MaxSegments(unsafe {
-        NonZeroUsize::new_unchecked(s2n_quic_core::recovery::MAX_BURST_PACKETS as usize)
-    });
+    const DEFAULT: Self = Self::MAX;
 }
 
 #[cfg(not(s2n_quic_platform_gso))]

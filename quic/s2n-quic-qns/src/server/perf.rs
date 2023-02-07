@@ -37,6 +37,9 @@ pub struct Perf {
     #[structopt(long)]
     disable_gso: bool,
 
+    #[structopt(long)]
+    mtu: Option<u16>,
+
     #[structopt(flatten)]
     limits: perf::Limits,
 
@@ -171,6 +174,10 @@ impl Perf {
 
         if self.disable_gso {
             io_builder = io_builder.with_gso_disabled()?;
+        }
+
+        if let Some(mtu) = self.mtu {
+            io_builder = io_builder.with_max_mtu(mtu)?;
         }
 
         let io = io_builder.build()?;

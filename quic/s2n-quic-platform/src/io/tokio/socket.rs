@@ -44,11 +44,17 @@ pub mod msg {
     pub async fn rx(socket: UdpSocket, mut channel: Unfilled<Handle>) {
         let socket = AsyncFd::new(socket).expect("invalid socket");
         let mut rx = socket::Rx::default();
+        let count = std::env::var("S2N_RX_ITER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1usize);
 
         while channel.ready().await.is_ok() {
             if let Ok(mut socket) = socket.readable().await {
-                if let Ok(mut slice) = channel.try_slice() {
-                    let _ = socket.try_io(|socket| rx.apply(socket.get_ref(), &mut slice));
+                for _ in 0..count {
+                    if let Ok(mut slice) = channel.try_slice() {
+                        let _ = socket.try_io(|socket| rx.apply(socket.get_ref(), &mut slice));
+                    }
                 }
             }
         }
@@ -57,11 +63,17 @@ pub mod msg {
     pub async fn tx(socket: UdpSocket, mut channel: Filled<Handle>) {
         let socket = AsyncFd::new(socket).expect("invalid socket");
         let mut tx = socket::Tx::default();
+        let count = std::env::var("S2N_TX_ITER")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1usize);
 
         while channel.ready().await.is_ok() {
             if let Ok(mut socket) = socket.writable().await {
-                if let Ok(mut slice) = channel.try_slice() {
-                    let _ = socket.try_io(|socket| tx.apply(socket.get_ref(), &mut slice));
+                for _ in 0..count {
+                    if let Ok(mut slice) = channel.try_slice() {
+                        let _ = socket.try_io(|socket| tx.apply(socket.get_ref(), &mut slice));
+                    }
                 }
             }
         }

@@ -24,7 +24,7 @@ pub const MINIMUM_MTU: u16 = 1200;
 
 // TODO decide on better defaults
 // Safety: 1500 is greater than zero
-pub const DEFAULT_MAX_MTU: MaxMtu = MaxMtu(unsafe { NonZeroU16::new_unchecked(8500) });
+pub const DEFAULT_MAX_MTU: MaxMtu = MaxMtu(unsafe { NonZeroU16::new_unchecked(1500) });
 
 // Length is the length in octets of this user datagram  including  this
 // header and the data. (This means the minimum value of the length is
